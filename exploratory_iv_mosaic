@@ -1,0 +1,117 @@
+import pandas as pd
+import numpy as np
+
+data = pd.read_csv('atec_anti_fraud_train.csv')
+
+# print(len(data))
+# 994731
+
+# print(len(data['id'].unique()))
+# 994731
+
+# print(data['label'].value_counts())
+#  0    977884
+#  1     12122
+# -1      4725
+
+# print(data['date'].describe())
+# min      2.017090e+07
+# 25%      2.017092e+07
+# 50%      2.017101e+07
+# 75%      2.017102e+07
+# max      2.017110e+07
+
+# print(data['f5'].value_counts())
+# print(data['f5'][16])
+# np.isnan(data['f5'][16])
+
+data = data.fillna(-99999)
+
+# 看一眼iv mosaic
+
+col_x = list(data.columns)
+col_x.remove('id')
+col_x.remove('label')
+col_x.remove('date')
+
+col_y = 'label'
+
+data_with_meaningful_lebal = data[data['label'] != -1]
+
+import math
+from scipy import stats
+from sklearn.utils.multiclass import type_of_target
+from statsmodels.graphics.mosaicplot import mosaic
+from matplotlib import pyplot as plt
+import pylab
+
+def check_target_binary(y):
+    '''
+    check if the target variable is binary, raise error if not.
+    :param y:
+    :return:
+    '''
+    y_type = type_of_target(y)
+    if y_type not in ['binary']:
+        raise ValueError('Label type must be binary')
+
+def count_binary(a, event=1):
+    event_count = (a == event).sum()
+    # non_event_count = a.shape[0] - event_count
+    non_event_count = len(a) - event_count
+    return event_count, non_event_count
+
+def woe_single_x(x, y, event=1):
+    '''
+    calculate woe and information for a single feature
+    :param x: 1-D numpy starnds for single feature
+    :param y: 1-D numpy array target variable
+    :param event: value of binary stands for the event to predict
+    :return: dictionary contains woe values for categories of this feature
+             information value of this feature
+    '''
+    check_target_binary(y)
+
+    event_total, non_event_total = count_binary(y, event=event)
+    x_labels = np.unique(x)
+    woe_dict = {}
+    iv = 0
+
+    for x1 in x_labels:
+        y1 = y[np.where(x == x1)[0]]
+        event_count, non_event_count = count_binary(y1, event=event)
+        rate_event = 1.0 * (event_count + 1) / event_total
+        rate_non_event = 1.0 * (non_event_count + 1) / non_event_total
+        woe1 = math.log(rate_event / rate_non_event)
+        woe_dict[x1] = woe1
+        iv += (rate_event - rate_non_event) * woe1
+
+    return woe_dict, iv
+
+# IV值与马赛克图
+
+voi_list = pd.Series()
+
+data_with_meaningful_lebal[col_y] = data_with_meaningful_lebal[col_y].replace([1, 0], ['Y', 'N'])
+
+x = 'f1'
+
+for x in col_x:
+    print(x)
+
+    if len(data_with_meaningful_lebal[x].unique()) > 10:
+        cuts = list(data_with_meaningful_lebal[x].quantile([0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7,
+                                                               0.75, 0.8, 0.85, 0.9, 0.95, 1.0]).drop_duplicates().values)
+        cuts = pd.cut(data_with_meaningful_lebal[x].values, cuts, right=True, include_lowest=True)
+        data_with_meaningful_lebal[x] = cuts
+
+    voi_list[x] = woe_single_x(data_with_meaningful_lebal[x].values, data_with_meaningful_lebal[col_y].values, event='Y')[1]
+
+    crosstable = pd.crosstab(data_with_meaningful_lebal[x], data_with_meaningful_lebal[col_y])
+    props = lambda key: {'color': 'darkslategrey' if 'Y' in key else 'lightsteelblue'}
+
+    mosaic(crosstable.stack(), title=x, properties=props, label_rotation=90, gap=0.01)
+    plt.subplots_adjust(bottom=0.25)
+    # pylab.savefig('./features_mosaic/' + x + '.png', pad_inches=0.1, dpi=1000, papertype='a4')
+
+voi_list.to_csv('./features_iv/features_iv.csv', encoding='utf-8')
